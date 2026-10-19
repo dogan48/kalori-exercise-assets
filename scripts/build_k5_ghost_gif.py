@@ -10,6 +10,7 @@ OUT_GIF = Path(r"C:\Users\Dogan\Projects\kalori-exercise-assets\squat-k5-ghost.g
 SIZE = 512
 FRAME_MS = 88
 BOTTOM_HOLD_COPIES = 2  # extra display time at deepest squat
+STAND_HOLD_COPIES = 3  # end on exact standing key (avoids loop snap)
 BG = (233, 233, 233)
 BG_TOL = 28
 
@@ -84,12 +85,18 @@ def _uniform_body_scale(
 
 def normalize_scale_and_feet(ref: Image.Image, im: Image.Image) -> Image.Image:
     """Lock figure scale to standing, anchor feet; pose may shorten visible height (bend, not shrink)."""
+    return normalize_scale_and_feet_with_scale(ref, im, None)
+
+
+def normalize_scale_and_feet_with_scale(
+    ref: Image.Image, im: Image.Image, scale: float | None = None
+) -> Image.Image:
     ref_box = _content_bbox(ref)
     im_box = _content_bbox(im)
     if ref_box == im_box and im is ref:
         return im.copy()
-
-    scale = _uniform_body_scale(ref, ref_box, im, im_box)
+    if scale is None:
+        scale = _uniform_body_scale(ref, ref_box, im, im_box)
 
     crop = im.crop(im_box)
     new_w = max(1, int(round(crop.width * scale)))
@@ -108,10 +115,19 @@ def normalize_scale_and_feet(ref: Image.Image, im: Image.Image) -> Image.Image:
 def normalize_keyframes(keyframes: list[Image.Image]) -> list[Image.Image]:
     ref_raw = keyframes[0]
     # Canonical standing canvas — all frames match this
-    ref = normalize_scale_and_feet(ref_raw, ref_raw)
+    ref = normalize_scale_and_feet_with_scale(ref_raw, ref_raw)
+    ref_box = _content_bbox(ref)
     out: list[Image.Image] = []
-    for im in keyframes:
-        out.append(normalize_scale_and_feet(ref, im))
+    for i, im in enumerate(keyframes):
+        im_box = _content_bbox(im)
+        scale = _uniform_body_scale(ref, ref_box, im, im_box)
+        # Key 4 (ascent): AI often shrinks vs keys 2–3 — keep at least mid-ascent height
+        if i == 3 and len(out) >= 2:
+            h2 = _box_h(_content_bbox(out[1]))
+            h3 = _box_h(_content_bbox(out[2]))
+            min_ascent_h = int(h3 + 0.55 * (h2 - h3))
+            scale = max(scale, min_ascent_h / _box_h(im_box))
+        out.append(normalize_scale_and_feet_with_scale(ref, im, scale))
     # Lock frame 1 and 5 (standing) to identical pixels
     out[0] = ref.copy()
     out[-1] = ref.copy()
@@ -139,15 +155,17 @@ def main() -> None:
         (3, 4, 7),  # mid -> stand
     ]
 
-    frames: list[Image.Image] = []
+    frames: list[Image.Image] = [kf[0]]
     for i_from, i_to, steps in segments:
         a, b = kf[i_from], kf[i_to]
-        frames.append(a)
         for s in range(1, steps + 1):
-            t = s / (steps + 1)
+            t = s / steps
             frames.append(blend_smooth(a, b, t))
         if i_to == 2:
             for _ in range(BOTTOM_HOLD_COPIES):
+                frames.append(b.copy())
+        elif i_to == 4:
+            for _ in range(STAND_HOLD_COPIES):
                 frames.append(b.copy())
 
     frames[0].save(
