@@ -34,26 +34,63 @@ def _content_bbox(im: Image.Image) -> tuple[int, int, int, int]:
     return box
 
 
-def _head_span(box: tuple[int, int, int, int]) -> int:
-    h = max(1, box[3] - box[1])
-    return max(1, int(h * 0.24))
-
-
 def _box_h(box: tuple[int, int, int, int]) -> int:
     return max(1, box[3] - box[1])
 
 
-def normalize_scale_and_feet(ref: Image.Image, im: Image.Image) -> Image.Image:
-    """Force same in-frame silhouette height as standing; anchor feet."""
+def _band_content_width(im: Image.Image, y0: int, y1: int) -> int:
+    y0 = max(0, y0)
+    y1 = min(im.height, max(y0 + 1, y1))
+    band = im.crop((0, y0, im.width, y1))
+    bg = Image.new("RGB", band.size, BG)
+    diff = ImageChops.difference(band, bg).convert("L")
+    mask = diff.point(lambda p: 255 if p > BG_TOL else 0)
+    box = mask.getbbox()
+    if not box:
+        return 0
+    return box[2] - box[0]
+
+
+def _head_band_width(im: Image.Image, box: tuple[int, int, int, int], crown_y: int) -> int:
+    h = _box_h(box)
+    band_h = max(10, int(h * 0.09))
+    y0 = crown_y - band_h // 3
+    w = _band_content_width(im, y0, y0 + band_h)
+    return max(1, w)
+
+
+def _crown_y(im: Image.Image, box: tuple[int, int, int, int], *, search_frac: float) -> int:
+    """Narrowest band in upper silhouette = head (below forward arms on squat)."""
+    h = _box_h(box)
+    band_h = max(10, int(h * 0.09))
+    y_start = box[1] + max(2, int(h * 0.02))
+    y_end = box[1] + int(h * search_frac)
+    best_y = y_start
+    best_w = 10**9
+    for y in range(y_start, min(y_end, box[3] - band_h)):
+        w = _band_content_width(im, y, y + band_h)
+        if 0 < w < best_w:
+            best_w = w
+            best_y = y
+    return best_y + band_h // 3
+
+
+def normalize_scale_and_feet(
+    ref: Image.Image,
+    im: Image.Image,
+    *,
+    ref_crown_y: int,
+    ref_h: int,
+) -> Image.Image:
+    """Match head band width at crown; anchor feet — do not equalize full silhouette height."""
     ref_box = _content_bbox(ref)
     im_box = _content_bbox(im)
     if ref_box == im_box and im is ref:
         return im.copy()
 
-    scale_head = _head_span(ref_box) / _head_span(im_box)
-    scale_h = _box_h(ref_box) / _box_h(im_box)
-    # AI squat frames are smaller — use stronger of the two metrics
-    scale = max(scale_head, scale_h)
+    search = 0.45 if _box_h(im_box) < ref_h * 0.94 else 0.28
+    im_crown = _crown_y(im, im_box, search_frac=search)
+    scale = _head_band_width(ref, ref_box, ref_crown_y) / _head_band_width(im, im_box, im_crown)
 
     crop = im.crop(im_box)
     new_w = max(1, int(round(crop.width * scale)))
@@ -71,11 +108,17 @@ def normalize_scale_and_feet(ref: Image.Image, im: Image.Image) -> Image.Image:
 
 def normalize_keyframes(keyframes: list[Image.Image]) -> list[Image.Image]:
     ref_raw = keyframes[0]
+    ref_box0 = _content_bbox(ref_raw)
+    ref_h0 = _box_h(ref_box0)
+    ref_crown_y0 = _crown_y(ref_raw, ref_box0, search_frac=0.28)
     # Canonical standing canvas — all frames match this
-    ref = normalize_scale_and_feet(ref_raw, ref_raw)
+    ref = normalize_scale_and_feet(ref_raw, ref_raw, ref_crown_y=ref_crown_y0, ref_h=ref_h0)
+    ref_box = _content_bbox(ref)
+    ref_h = _box_h(ref_box)
+    ref_crown_y = _crown_y(ref, ref_box, search_frac=0.28)
     out: list[Image.Image] = []
     for im in keyframes:
-        out.append(normalize_scale_and_feet(ref, im))
+        out.append(normalize_scale_and_feet(ref, im, ref_crown_y=ref_crown_y, ref_h=ref_h))
     # Lock frame 1 and 5 (standing) to identical pixels
     out[0] = ref.copy()
     out[-1] = ref.copy()
