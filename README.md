@@ -4,12 +4,12 @@ Temporary public hosting for app animation previews.
 
 ## Primary squat demo (recommended)
 
-**12 keyframes + ghost blend (v2 master character, side profile):**
+**6 keyframes + ghost blend (v2 master, fixed camera / side profile):**
 
-- Preview: https://github.com/dogan48/kalori-exercise-assets/blob/main/squat-k12-ghost.gif
-- Raw: https://github.com/dogan48/kalori-exercise-assets/raw/main/squat-k12-ghost.gif
+- Preview: https://github.com/dogan48/kalori-exercise-assets/blob/main/squat-k6-ghost.gif
+- Raw: https://github.com/dogan48/kalori-exercise-assets/raw/main/squat-k6-ghost.gif
 
-Older attempts: `squat-chosen-50f.gif`, `squat-v2-final-50f.gif`
+Also: `squat-k12-ghost.gif` (12 keys). Older: `squat-chosen-50f.gif`, `squat-v2-final-50f.gif`
 
 ## Deprecated
 
