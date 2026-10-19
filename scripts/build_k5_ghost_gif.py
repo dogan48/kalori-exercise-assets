@@ -35,21 +35,25 @@ def _content_bbox(im: Image.Image) -> tuple[int, int, int, int]:
 
 
 def _head_span(box: tuple[int, int, int, int]) -> int:
-    """Head/shoulder band height — stable scale reference across squat poses."""
     h = max(1, box[3] - box[1])
     return max(1, int(h * 0.24))
 
 
-def normalize_scale_and_feet(ref: Image.Image, im: Image.Image) -> Image.Image:
-    """Match head scale + foot anchor to standing reference (not full bbox height)."""
-    if im is ref:
-        return im.copy()
+def _box_h(box: tuple[int, int, int, int]) -> int:
+    return max(1, box[3] - box[1])
 
+
+def normalize_scale_and_feet(ref: Image.Image, im: Image.Image) -> Image.Image:
+    """Force same in-frame silhouette height as standing; anchor feet."""
     ref_box = _content_bbox(ref)
     im_box = _content_bbox(im)
-    ref_head = _head_span(ref_box)
-    im_head = _head_span(im_box)
-    scale = ref_head / im_head
+    if ref_box == im_box and im is ref:
+        return im.copy()
+
+    scale_head = _head_span(ref_box) / _head_span(im_box)
+    scale_h = _box_h(ref_box) / _box_h(im_box)
+    # AI squat frames are smaller — use stronger of the two metrics
+    scale = max(scale_head, scale_h)
 
     crop = im.crop(im_box)
     new_w = max(1, int(round(crop.width * scale)))
@@ -66,9 +70,16 @@ def normalize_scale_and_feet(ref: Image.Image, im: Image.Image) -> Image.Image:
 
 
 def normalize_keyframes(keyframes: list[Image.Image]) -> list[Image.Image]:
-    """Normalize every frame including standing so GIF loop has one scale."""
-    ref = keyframes[0]
-    return [normalize_scale_and_feet(ref, im) for im in keyframes]
+    ref_raw = keyframes[0]
+    # Canonical standing canvas — all frames match this
+    ref = normalize_scale_and_feet(ref_raw, ref_raw)
+    out: list[Image.Image] = []
+    for im in keyframes:
+        out.append(normalize_scale_and_feet(ref, im))
+    # Lock frame 1 and 5 (standing) to identical pixels
+    out[0] = ref.copy()
+    out[-1] = ref.copy()
+    return out
 
 
 def blend_smooth(a: Image.Image, b: Image.Image, t: float) -> Image.Image:
