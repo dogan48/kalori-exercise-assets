@@ -3,13 +3,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 ASSETS = Path(r"C:\Users\Dogan\.cursor\projects\C-Users-Dogan-Projects\assets")
 OUT_GIF = Path(r"C:\Users\Dogan\Projects\kalori-exercise-assets\squat-k5-ghost.gif")
 SIZE = 512
 FRAME_MS = 88
 BOTTOM_HOLD_COPIES = 2  # extra display time at deepest squat
+BG = (233, 233, 233)
+BG_TOL = 28
 
 
 def smoothstep(t: float) -> float:
@@ -19,6 +21,46 @@ def smoothstep(t: float) -> float:
 
 def load_rgb(path: Path) -> Image.Image:
     return Image.open(path).convert("RGB").resize((SIZE, SIZE), Image.Resampling.LANCZOS)
+
+
+def _content_bbox(im: Image.Image) -> tuple[int, int, int, int]:
+    bg = Image.new("RGB", im.size, BG)
+    diff = ImageChops.difference(im, bg).convert("L")
+    # ignore tiny compression noise
+    mask = diff.point(lambda p: 255 if p > BG_TOL else 0)
+    box = mask.getbbox()
+    if not box:
+        return (0, 0, im.width, im.height)
+    return box
+
+
+def normalize_scale_and_feet(ref: Image.Image, im: Image.Image) -> Image.Image:
+    """Match subject height and foot line to reference (fixes dip shrink)."""
+    ref_box = _content_bbox(ref)
+    im_box = _content_bbox(im)
+    ref_h = max(1, ref_box[3] - ref_box[1])
+    im_h = max(1, im_box[3] - im_box[1])
+    scale = ref_h / im_h
+    crop = im.crop(im_box)
+    new_w = max(1, int(round(crop.width * scale)))
+    new_h = max(1, int(round(crop.height * scale)))
+    scaled = crop.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+    canvas = Image.new("RGB", ref.size, BG)
+    ref_cx = (ref_box[0] + ref_box[2]) // 2
+    ref_foot_y = ref_box[3]
+    paste_x = ref_cx - new_w // 2
+    paste_y = ref_foot_y - new_h
+    canvas.paste(scaled, (paste_x, paste_y))
+    return canvas
+
+
+def normalize_keyframes(keyframes: list[Image.Image]) -> list[Image.Image]:
+    ref = keyframes[0]
+    out = [ref]
+    for im in keyframes[1:]:
+        out.append(normalize_scale_and_feet(ref, im))
+    return out
 
 
 def blend_smooth(a: Image.Image, b: Image.Image, t: float) -> Image.Image:
@@ -33,7 +75,7 @@ def main() -> None:
         if not p.exists():
             raise SystemExit(f"Missing {p}")
 
-    kf = [load_rgb(p) for p in paths]
+    kf = normalize_keyframes([load_rgb(p) for p in paths])
     # (from_idx, to_idx, ghost_steps) — more steps on large leg travel
     segments = [
         (0, 1, 7),  # stand -> mid down
