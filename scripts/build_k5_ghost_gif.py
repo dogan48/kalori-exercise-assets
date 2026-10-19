@@ -51,12 +51,34 @@ def _band_content_width(im: Image.Image, y0: int, y1: int) -> int:
     return box[2] - box[0]
 
 
-def _head_band_width(im: Image.Image, box: tuple[int, int, int, int], crown_y: int) -> int:
+def _head_band_width_at_crown(
+    im: Image.Image, box: tuple[int, int, int, int], crown_y: int
+) -> int:
     h = _box_h(box)
     band_h = max(10, int(h * 0.09))
     y0 = crown_y - band_h // 3
-    w = _band_content_width(im, y0, y0 + band_h)
-    return max(1, w)
+    return max(1, _band_content_width(im, y0, y0 + band_h))
+
+
+def _uniform_body_scale(
+    ref: Image.Image,
+    ref_box: tuple[int, int, int, int],
+    im: Image.Image,
+    im_box: tuple[int, int, int, int],
+) -> float:
+    """Lock figure zoom to standing: same head size and same silhouette height in frame."""
+    ref_h = _box_h(ref_box)
+    im_h = _box_h(im_box)
+    scale_h = ref_h / im_h
+
+    ref_crown = _crown_y(ref, ref_box, search_frac=0.28)
+    search = 0.45 if im_h < ref_h * 0.94 else 0.28
+    im_crown = _crown_y(im, im_box, search_frac=search)
+    rh = _head_band_width_at_crown(ref, ref_box, ref_crown)
+    ih = _head_band_width_at_crown(im, im_box, im_crown)
+    scale_head = rh / ih if ih > 8 else scale_h
+
+    return max(scale_h, scale_head)
 
 
 def _crown_y(im: Image.Image, box: tuple[int, int, int, int], *, search_frac: float) -> int:
@@ -75,22 +97,14 @@ def _crown_y(im: Image.Image, box: tuple[int, int, int, int], *, search_frac: fl
     return best_y + band_h // 3
 
 
-def normalize_scale_and_feet(
-    ref: Image.Image,
-    im: Image.Image,
-    *,
-    ref_crown_y: int,
-    ref_h: int,
-) -> Image.Image:
-    """Match head band width at crown; anchor feet — do not equalize full silhouette height."""
+def normalize_scale_and_feet(ref: Image.Image, im: Image.Image) -> Image.Image:
+    """Uniform body scale locked to standing; feet anchored (pose height may shrink naturally)."""
     ref_box = _content_bbox(ref)
     im_box = _content_bbox(im)
     if ref_box == im_box and im is ref:
         return im.copy()
 
-    search = 0.45 if _box_h(im_box) < ref_h * 0.94 else 0.28
-    im_crown = _crown_y(im, im_box, search_frac=search)
-    scale = _head_band_width(ref, ref_box, ref_crown_y) / _head_band_width(im, im_box, im_crown)
+    scale = _uniform_body_scale(ref, ref_box, im, im_box)
 
     crop = im.crop(im_box)
     new_w = max(1, int(round(crop.width * scale)))
@@ -108,17 +122,11 @@ def normalize_scale_and_feet(
 
 def normalize_keyframes(keyframes: list[Image.Image]) -> list[Image.Image]:
     ref_raw = keyframes[0]
-    ref_box0 = _content_bbox(ref_raw)
-    ref_h0 = _box_h(ref_box0)
-    ref_crown_y0 = _crown_y(ref_raw, ref_box0, search_frac=0.28)
     # Canonical standing canvas — all frames match this
-    ref = normalize_scale_and_feet(ref_raw, ref_raw, ref_crown_y=ref_crown_y0, ref_h=ref_h0)
-    ref_box = _content_bbox(ref)
-    ref_h = _box_h(ref_box)
-    ref_crown_y = _crown_y(ref, ref_box, search_frac=0.28)
+    ref = normalize_scale_and_feet(ref_raw, ref_raw)
     out: list[Image.Image] = []
     for im in keyframes:
-        out.append(normalize_scale_and_feet(ref, im, ref_crown_y=ref_crown_y, ref_h=ref_h))
+        out.append(normalize_scale_and_feet(ref, im))
     # Lock frame 1 and 5 (standing) to identical pixels
     out[0] = ref.copy()
     out[-1] = ref.copy()
