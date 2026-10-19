@@ -34,13 +34,23 @@ def _content_bbox(im: Image.Image) -> tuple[int, int, int, int]:
     return box
 
 
+def _head_span(box: tuple[int, int, int, int]) -> int:
+    """Head/shoulder band height — stable scale reference across squat poses."""
+    h = max(1, box[3] - box[1])
+    return max(1, int(h * 0.24))
+
+
 def normalize_scale_and_feet(ref: Image.Image, im: Image.Image) -> Image.Image:
-    """Match subject height and foot line to reference (fixes dip shrink)."""
+    """Match head scale + foot anchor to standing reference (not full bbox height)."""
+    if im is ref:
+        return im.copy()
+
     ref_box = _content_bbox(ref)
     im_box = _content_bbox(im)
-    ref_h = max(1, ref_box[3] - ref_box[1])
-    im_h = max(1, im_box[3] - im_box[1])
-    scale = ref_h / im_h
+    ref_head = _head_span(ref_box)
+    im_head = _head_span(im_box)
+    scale = ref_head / im_head
+
     crop = im.crop(im_box)
     new_w = max(1, int(round(crop.width * scale)))
     new_h = max(1, int(round(crop.height * scale)))
@@ -56,11 +66,9 @@ def normalize_scale_and_feet(ref: Image.Image, im: Image.Image) -> Image.Image:
 
 
 def normalize_keyframes(keyframes: list[Image.Image]) -> list[Image.Image]:
+    """Normalize every frame including standing so GIF loop has one scale."""
     ref = keyframes[0]
-    out = [ref]
-    for im in keyframes[1:]:
-        out.append(normalize_scale_and_feet(ref, im))
-    return out
+    return [normalize_scale_and_feet(ref, im) for im in keyframes]
 
 
 def blend_smooth(a: Image.Image, b: Image.Image, t: float) -> Image.Image:
