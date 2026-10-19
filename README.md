@@ -8,6 +8,7 @@ Temporary public hosting for app animation previews.
 
 - Preview: https://github.com/dogan48/kalori-exercise-assets/blob/main/squat-k5-ghost.gif
 - Raw: https://github.com/dogan48/kalori-exercise-assets/raw/main/squat-k5-ghost.gif
+- **Key 4 vs key 2 ~10% taller (ascent):** [squat-k5-ghost-k4-gap10.gif](https://github.com/dogan48/kalori-exercise-assets/raw/main/squat-k5-ghost-k4-gap10.gif) (default `squat-k5-ghost.gif` uses ~5%)
 
 Also: `squat-k6-ghost.gif`, `squat-k12-ghost.gif`. Older: `squat-chosen-50f.gif`
 
