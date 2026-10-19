@@ -51,13 +51,18 @@ def _band_content_width(im: Image.Image, y0: int, y1: int) -> int:
     return box[2] - box[0]
 
 
-def _head_band_width_at_crown(
-    im: Image.Image, box: tuple[int, int, int, int], crown_y: int
-) -> int:
+def _min_upper_band_width(im: Image.Image, box: tuple[int, int, int, int]) -> int:
+    """Narrowest band under arms — proxy for head/face width in side view."""
     h = _box_h(box)
     band_h = max(10, int(h * 0.09))
-    y0 = crown_y - band_h // 3
-    return max(1, _band_content_width(im, y0, y0 + band_h))
+    y_start = box[1] + int(h * 0.04)
+    y_end = box[1] + int(h * 0.16)
+    best = 10**9
+    for y in range(y_start, min(y_end, box[3] - band_h)):
+        w = _band_content_width(im, y, y + band_h)
+        if 0 < w < best:
+            best = w
+    return max(1, best)
 
 
 def _uniform_body_scale(
@@ -66,39 +71,19 @@ def _uniform_body_scale(
     im: Image.Image,
     im_box: tuple[int, int, int, int],
 ) -> float:
-    """Lock figure zoom to standing: same head size and same silhouette height in frame."""
+    """Same figure zoom (never squash shorter); visible height comes from pose only."""
     ref_h = _box_h(ref_box)
     im_h = _box_h(im_box)
-    scale_h = ref_h / im_h
-
-    ref_crown = _crown_y(ref, ref_box, search_frac=0.28)
-    search = 0.45 if im_h < ref_h * 0.94 else 0.28
-    im_crown = _crown_y(im, im_box, search_frac=search)
-    rh = _head_band_width_at_crown(ref, ref_box, ref_crown)
-    ih = _head_band_width_at_crown(im, im_box, im_crown)
-    scale_head = rh / ih if ih > 8 else scale_h
-
-    return max(scale_h, scale_head)
-
-
-def _crown_y(im: Image.Image, box: tuple[int, int, int, int], *, search_frac: float) -> int:
-    """Narrowest band in upper silhouette = head (below forward arms on squat)."""
-    h = _box_h(box)
-    band_h = max(10, int(h * 0.09))
-    y_start = box[1] + max(2, int(h * 0.02))
-    y_end = box[1] + int(h * search_frac)
-    best_y = y_start
-    best_w = 10**9
-    for y in range(y_start, min(y_end, box[3] - band_h)):
-        w = _band_content_width(im, y, y + band_h)
-        if 0 < w < best_w:
-            best_w = w
-            best_y = y
-    return best_y + band_h // 3
+    if im_h >= ref_h * 0.98:
+        return 1.0
+    rw = _min_upper_band_width(ref, ref_box)
+    iw = _min_upper_band_width(im, im_box)
+    # Only upscale if AI drew head/body thinner — never shrink (avoids "zoomed out" squat)
+    return max(1.0, rw / iw)
 
 
 def normalize_scale_and_feet(ref: Image.Image, im: Image.Image) -> Image.Image:
-    """Uniform body scale locked to standing; feet anchored (pose height may shrink naturally)."""
+    """Lock figure scale to standing, anchor feet; pose may shorten visible height (bend, not shrink)."""
     ref_box = _content_bbox(ref)
     im_box = _content_bbox(im)
     if ref_box == im_box and im is ref:
