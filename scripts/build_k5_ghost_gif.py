@@ -6,9 +6,7 @@ from pathlib import Path
 from PIL import Image, ImageChops
 
 ASSETS = Path(r"C:\Users\Dogan\.cursor\projects\C-Users-Dogan-Projects\assets")
-REPO = Path(r"C:\Users\Dogan\Projects\kalori-exercise-assets")
-OUT_GIF = REPO / "squat-k5-ghost.gif"
-OUT_GIF_K4_GAP10 = REPO / "squat-k5-ghost-k4-gap10.gif"
+OUT_GIF = Path(r"C:\Users\Dogan\Projects\kalori-exercise-assets\squat-k5-ghost.gif")
 SIZE = 512
 FRAME_MS = 88
 BOTTOM_HOLD_COPIES = 2  # extra display time at deepest squat
@@ -114,25 +112,20 @@ def normalize_scale_and_feet_with_scale(
     return canvas
 
 
-def normalize_keyframes(
-    keyframes: list[Image.Image],
-    *,
-    k4_vs_k2_gap: float,
-) -> list[Image.Image]:
-    """k4_vs_k2_gap: extra silhouette height on key 4 vs key 2 (0.05 ≈ 5%, 0.10 ≈ 10%)."""
+def normalize_keyframes(keyframes: list[Image.Image]) -> list[Image.Image]:
     ref_raw = keyframes[0]
     # Canonical standing canvas — all frames match this
     ref = normalize_scale_and_feet_with_scale(ref_raw, ref_raw)
     ref_box = _content_bbox(ref)
-    ref_h = _box_h(ref_box)
     out: list[Image.Image] = []
     for i, im in enumerate(keyframes):
         im_box = _content_bbox(im)
         scale = _uniform_body_scale(ref, ref_box, im, im_box)
-        # Key 4 (ascent): lift vs key 2 so 2 and 4 are not ~same depth
+        # Key 4 (ascent): AI often shrinks vs keys 2–3 — keep at least mid-ascent height
         if i == 3 and len(out) >= 2:
             h2 = _box_h(_content_bbox(out[1]))
-            min_ascent_h = min(ref_h - 1, int(h2 * (1.0 + k4_vs_k2_gap)))
+            h3 = _box_h(_content_bbox(out[2]))
+            min_ascent_h = int(h3 + 0.55 * (h2 - h3))
             scale = max(scale, min_ascent_h / _box_h(im_box))
         out.append(normalize_scale_and_feet_with_scale(ref, im, scale))
     # Lock frame 1 and 5 (standing) to identical pixels
@@ -145,13 +138,23 @@ def blend_smooth(a: Image.Image, b: Image.Image, t: float) -> Image.Image:
     return Image.blend(a, b, smoothstep(t))
 
 
-def build_gif(kf: list[Image.Image], out_path: Path) -> None:
+def main() -> None:
+    # Reuse best k6 keys: skip 10% / frame 5–6 filler
+    names = ["squat-k6-01.jpg", "squat-k6-002.jpg", "squat-k6-003.jpg", "squat-k6-004.jpg", "squat-k6-01.jpg"]
+    paths = [ASSETS / n for n in names]
+    for p in paths:
+        if not p.exists():
+            raise SystemExit(f"Missing {p}")
+
+    kf = normalize_keyframes([load_rgb(p) for p in paths])
+    # (from_idx, to_idx, ghost_steps) — more steps on large leg travel
     segments = [
-        (0, 1, 7),
-        (1, 2, 10),
-        (2, 3, 10),
-        (3, 4, 7),
+        (0, 1, 7),  # stand -> mid down
+        (1, 2, 10),  # mid -> bottom
+        (2, 3, 10),  # bottom -> mid up
+        (3, 4, 7),  # mid -> stand
     ]
+
     frames: list[Image.Image] = [kf[0]]
     for i_from, i_to, steps in segments:
         a, b = kf[i_from], kf[i_to]
@@ -166,34 +169,22 @@ def build_gif(kf: list[Image.Image], out_path: Path) -> None:
                 frames.append(b.copy())
 
     frames[0].save(
-        out_path,
+        OUT_GIF,
         save_all=True,
         append_images=frames[1:],
         duration=FRAME_MS,
         loop=0,
         optimize=True,
     )
-    print(out_path, "gif_frames", len(frames), "bytes", out_path.stat().st_size)
-
-
-def main() -> None:
-    names = ["squat-k6-01.jpg", "squat-k6-002.jpg", "squat-k6-003.jpg", "squat-k6-004.jpg", "squat-k6-01.jpg"]
-    paths = [ASSETS / n for n in names]
-    for p in paths:
-        if not p.exists():
-            raise SystemExit(f"Missing {p}")
-    raws = [load_rgb(p) for p in paths]
-
-    for out_path, gap, label in (
-        (OUT_GIF, 0.05, "k4+5% vs k2"),
-        (OUT_GIF_K4_GAP10, 0.10, "k4+10% vs k2"),
-    ):
-        kf = normalize_keyframes(raws, k4_vs_k2_gap=gap)
-        h2 = _box_h(_content_bbox(kf[1]))
-        h4 = _box_h(_content_bbox(kf[3]))
-        pct = round(100 * abs(h4 - h2) / h2, 1)
-        print(label, "key2_h", h2, "key4_h", h4, "delta_pct", pct)
-        build_gif(kf, out_path)
+    print(
+        OUT_GIF,
+        "keyframes",
+        len(kf),
+        "gif_frames",
+        len(frames),
+        "bytes",
+        OUT_GIF.stat().st_size,
+    )
 
 
 if __name__ == "__main__":
